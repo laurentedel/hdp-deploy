@@ -105,7 +105,44 @@ yum-complete-transaction --cleanup-only
 yum -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
 yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
 
-yum -y install java-1.8.0-openjdk-devel ambari-agent ambari-server mariadb-server mariadb mysql-connector-java mlocate telnet krb5-server krb5-libs krb5-workstation at jq libtirpc-devel #docker-ce container-selinux
+# POSTGRES
+rm -rf /var/lib/pgsql
+rm -f /etc/alternatives/pgsql-*
+yum install -y https://download.postgresql.org/pub/repos/yum/reporpms/EL-7-x86_64/pgdg-redhat-repo-latest.noarch.rpm
+yum install -y postgresql10-server postgresql10
+chown postgres: /var/lib/pgsql
+rm -rf /var/lib/pgsql/10/data
+su - postgres -c "/usr/pgsql-10/bin/pg_ctl initdb"
+chkconfig postgresql-10 on
+echo '' >  /var/lib/pgsql/10/data/pg_hba.conf
+echo 'local all das,streamsmsgmgr,cloudbreak,registry,ambari,postgres,hive,ranger,rangerdba,rangeradmin,rangerlogger,druid,registry           trust' >> /var/lib/pgsql/10/data/pg_hba.conf
+echo 'host  all das,streamsmsgmgr,cloudbreak,registry,ambari,postgres,hive,ranger,rangerdba,rangeradmin,rangerlogger,druid,registry 0.0.0.0/0 trust' >> /var/lib/pgsql/10/data/pg_hba.conf
+echo 'host  all das,streamsmsgmgr,cloudbreak,registry,ambari,postgres,hive,ranger,rangerdba,rangeradmin,rangerlogger,druid,registry ::/0      trust' >> /var/lib/pgsql/10/data/pg_hba.conf
+echo 'local all             all                                                                                                         peer       ' >> /var/lib/pgsql/10/data/pg_hba.conf
+echo 'host  all             all             127.0.0.1/32                                                                                trust      ' >> /var/lib/pgsql/10/data/pg_hba.conf
+echo 'host  all             all             ::1/128                                                                                     ident      ' >> /var/lib/pgsql/10/data/pg_hba.conf
+echo "listen_addresses = '*'" >> /var/lib/pgsql/10/data/postgres.conf
+su - postgres -c "/usr/pgsql-10/bin/pg_ctl start"
+
+psql -U postgres -a << EOF
+CREATE DATABASE ambari;
+CREATE USER ambari WITH PASSWORD 'bigdata';
+GRANT ALL PRIVILEGES ON DATABASE ambari TO ambari;
+\connect ambari
+CREATE SCHEMA ambari AUTHORIZATION ambari;
+ALTER SCHEMA ambari OWNER TO ambari;
+ALTER ROLE ambari SET search_path to 'ambari', 'public';
+\q
+EOF
+psql -U ambari -d ambari -a << EOF
+\connect ambari;
+\i /var/lib/ambari-server/resources/Ambari-DDL-Postgres-CREATE.sql;
+EOF
+
+### POSTGRES CONNECTOR
+curl -O https://jdbc.postgresql.org/download/postgresql-42.2.8.jar
+
+yum -y install java-1.8.0-openjdk-devel ambari-agent ambari-server mlocate telnet krb5-server krb5-libs krb5-workstation at jq libtirpc-devel #docker-ce container-selinux
 
 rpm -qa | grep libtirpc-devel
 if [ $? -ne 0 ]
@@ -182,69 +219,39 @@ systemctl enable mariadb
 systemctl start mariadb
 /usr/bin/mysqladmin -u root password 'admin'
 
-mysql -u root -padmin << EOF
+psql -U postgres -a << EOF
 create database hive;
 create database ranger;
 create database registry;
 create database streamline;
 create database superset;
-create database druid character set utf8 collate utf8_general_ci;
+create database druid;
 create database rangerkms;
 create database streamsmsgmgr;
 
-create user 'hive'@'%' identified by 'hive';
-create user 'rangeradmin'@'%' identified by 'rangeradmin';
+CREATE USER hive WITH PASSWORD 'hive';
+CREATE USER rangeradmin WITH PASSWORD 'rangeradmin';
+CREATE USER registry WITH PASSWORD 'registry';
+CREATE USER streamline WITH PASSWORD 'streamline';
+CREATE USER superset WITH PASSWORD 'superset';
+CREATE USER druid WITH PASSWORD 'druid';
+CREATE USER rangerkms WITH PASSWORD 'rangerkms';
+CREATE USER streamsmsgmgr WITH PASSWORD 'streamsmsgmgr';
 
-grant all privileges on hive.* to 'hive'@'%' with grant option;
-grant all privileges on ranger.* to 'rangeradmin'@'%' with grant option;
-
-create user 'hive'@'localhost' identified by 'hive';
-create user 'rangeradmin'@'localhost' identified by 'rangeradmin';
-
-grant all privileges on hive.* to 'hive'@'localhost' with grant option;
-grant all privileges on ranger.* to 'rangeradmin'@'localhost' with grant option;
-
-create user 'registry'@'localhost' identified by 'registry';
-create user 'registry'@'%' identified by 'registry';
-
-grant all privileges on registry.* to 'registry'@'localhost' with grant option;
-grant all privileges on registry.* to 'registry'@'%' with grant option;
-
-create user 'streamline'@'localhost' identified by 'streamline';
-create user 'streamline'@'%' identified by 'streamline';
-
-grant all privileges on streamline.* to 'streamline'@'localhost' with grant option;
-grant all privileges on streamline.* to 'streamline'@'%' with grant option;
-
-create user 'superset'@'localhost' identified by 'superset';
-create user 'superset'@'%' identified by 'superset';
-
-grant all privileges on superset.* to 'superset'@'localhost' with grant option;
-grant all privileges on superset.* to 'superset'@'%' with grant option;
-
-create user 'druid'@'localhost' identified by 'druid';
-create user 'druid'@'%' identified by 'druid';
-
-grant all privileges on druid.* to 'druid'@'localhost' with grant option;
-grant all privileges on druid.* to 'druid'@'%' with grant option;
-
-create user 'rangerkms'@'localhost' identified by 'rangerkms';
-create user 'rangerkms'@'%' identified by 'rangerkms';
-
-grant all privileges on rangerkms.* to 'rangerkms'@'localhost' with grant option;
-grant all privileges on rangerkms.* to 'rangerkms'@'%' with grant option;
-
-create user 'streamsmsgmgr'@'localhost' identified by 'streamsmsgmgr';
-create user 'streamsmsgmgr'@'%' identified by 'streamsmsgmgr';
-
-grant all privileges on streamsmsgmgr.* to 'streamsmsgmgr'@'localhost' with grant option;
-grant all privileges on streamsmsgmgr.* to 'streamsmsgmgr'@'%' with grant option;
-
-flush privileges;
+GRANT ALL PRIVILEGES ON DATABASE hive TO hive;
+GRANT ALL PRIVILEGES ON DATABASE ranger TO rangeradmin;
+GRANT ALL PRIVILEGES ON DATABASE registry TO registry;
+GRANT ALL PRIVILEGES ON DATABASE streamline TO streamline;
+GRANT ALL PRIVILEGES ON DATABASE superset TO superset;
+GRANT ALL PRIVILEGES ON DATABASE druid TO druid;
+GRANT ALL PRIVILEGES ON DATABASE rangerkms TO rangerkms;
+GRANT ALL PRIVILEGES ON DATABASE streamsmsgmgr TO streamsmsgmgr;
 EOF
 
+
 printf "\nRunning ambari-server setup...\n"
-ambari-server setup --jdbc-db=mysql --jdbc-driver="/usr/share/java/mysql-connector-java.jar"
+#ambari-server setup --jdbc-db=mysql --jdbc-driver="/usr/share/java/mysql-connector-java.jar"
+ambari-server setup --jdbc-db=postgres  --jdbc-driver=./postgresql-42.2.8.jar -s
 
 
 # Setup /tmp/hdf.json:
