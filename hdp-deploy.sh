@@ -121,8 +121,11 @@ echo 'host  all das,streamsmsgmgr,cloudbreak,registry,ambari,postgres,hive,range
 echo 'local all             all                                                                                                         peer       ' >> /var/lib/pgsql/10/data/pg_hba.conf
 echo 'host  all             all             127.0.0.1/32                                                                                trust      ' >> /var/lib/pgsql/10/data/pg_hba.conf
 echo 'host  all             all             ::1/128                                                                                     ident      ' >> /var/lib/pgsql/10/data/pg_hba.conf
-echo "listen_addresses = '*'" >> /var/lib/pgsql/10/data/postgres.conf
+echo "listen_addresses = '*'" >> /var/lib/pgsql/10/data/postgresql.conf
+echo "starting postgresql"
 su - postgres -c "/usr/pgsql-10/bin/pg_ctl start"
+
+yum -y install java-1.8.0-openjdk-devel ambari-agent ambari-server mlocate telnet krb5-server krb5-libs krb5-workstation at jq libtirpc-devel #docker-ce container-selinux
 
 psql -U postgres -a << EOF
 CREATE DATABASE ambari;
@@ -134,6 +137,7 @@ ALTER SCHEMA ambari OWNER TO ambari;
 ALTER ROLE ambari SET search_path to 'ambari', 'public';
 \q
 EOF
+
 psql -U ambari -d ambari -a << EOF
 \connect ambari;
 \i /var/lib/ambari-server/resources/Ambari-DDL-Postgres-CREATE.sql;
@@ -141,8 +145,6 @@ EOF
 
 ### POSTGRES CONNECTOR
 curl -O https://jdbc.postgresql.org/download/postgresql-42.2.8.jar
-
-yum -y install java-1.8.0-openjdk-devel ambari-agent ambari-server mlocate telnet krb5-server krb5-libs krb5-workstation at jq libtirpc-devel #docker-ce container-selinux
 
 rpm -qa | grep libtirpc-devel
 if [ $? -ne 0 ]
@@ -205,29 +207,15 @@ sed -i '53i force_https_protocol=PROTOCOL_TLSv1_2' /etc/ambari-agent/conf/ambari
 systemctl enable ambari-agent
 service ambari-agent restart
 
-# Setup the ambari-server
-printf "\nConfiguring ambari-server:\n"
-systemctl enable ambari-server
-ambari-server setup --enable-lzo-under-gpl-license -j /usr/lib/jvm/java-1.8.0-openjdk -s
-ambari-server start
-
-# Make MySQL listen on localhost only
-printf "\nConfiguring MySQL/MariaDB:\n"
-sed -i '/\[mysqld\]/a bind-address = 127.0.0.1' /etc/my.cnf
-# Setup the MySQL for Hive/Ranger
-systemctl enable mariadb
-systemctl start mariadb
-/usr/bin/mysqladmin -u root password 'admin'
-
 psql -U postgres -a << EOF
-create database hive;
-create database ranger;
-create database registry;
-create database streamline;
-create database superset;
-create database druid;
-create database rangerkms;
-create database streamsmsgmgr;
+CREATE DATABASE hive;
+CREATE DATABASE ranger;
+CREATE DATABASE registry;
+CREATE DATABASE streamline;
+CREATE DATABASE superset;
+CREATE DATABASE druid;
+CREATE DATABASE rangerkms;
+CREATE DATABASE streamsmsgmgr;
 
 CREATE USER hive WITH PASSWORD 'hive';
 CREATE USER rangeradmin WITH PASSWORD 'rangeradmin';
@@ -249,10 +237,12 @@ GRANT ALL PRIVILEGES ON DATABASE streamsmsgmgr TO streamsmsgmgr;
 EOF
 
 
+# Setup the ambari-server
 printf "\nRunning ambari-server setup...\n"
+systemctl enable ambari-server
 #ambari-server setup --jdbc-db=mysql --jdbc-driver="/usr/share/java/mysql-connector-java.jar"
-ambari-server setup --jdbc-db=postgres  --jdbc-driver=./postgresql-42.2.8.jar -s
-
+ambari-server setup --jdbc-db=postgres --jdbc-driver=./postgresql-42.2.8.jar 
+ambari-server setup --enable-lzo-under-gpl-license -j /usr/lib/jvm/java-1.8.0-openjdk --database=postgres --databasehost=localhost --databaseport=5432 --databasename=ambari --postgresschema=ambari --databaseusername=ambari --databasepassword=bigdata -s
 
 # Setup /tmp/hdf.json:
 cat > /tmp/hdp-utils.json << END
